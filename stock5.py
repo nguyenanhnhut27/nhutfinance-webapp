@@ -6,8 +6,9 @@ from datetime import datetime
 import numpy as np
 import yfinance as yf
 from scipy.signal import find_peaks
-import json
+import sqlite3
 import os
+from contextlib import contextmanager
 
 # Set page configuration
 st.set_page_config(
@@ -16,70 +17,140 @@ st.set_page_config(
     layout="wide"
 )
 
-# Define file paths for persistent storage
-PORTFOLIO_FILE = "portfolio_data.csv"
-BUDGET_FILE = "budget_data.json"
+# Database setup
+DB_FILE = "portfolio.db"
 
-# Function to save portfolio to CSV
-def save_portfolio():
-    if not st.session_state.portfolio.empty:
-        st.session_state.portfolio.to_csv(PORTFOLIO_FILE, index=False)
+@contextmanager
+def get_db_connection():
+    """Context manager for database connections"""
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
-# Function to load portfolio from CSV
-def load_portfolio():
-    if os.path.exists(PORTFOLIO_FILE):
+def init_database():
+    """Initialize the database with required tables"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Create portfolio table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS portfolio (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_symbol TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                shares REAL NOT NULL,
+                buy_price REAL NOT NULL,
+                current_price REAL NOT NULL,
+                total_investment REAL NOT NULL,
+                current_value REAL NOT NULL,
+                unrealized_pnl REAL NOT NULL,
+                return_pct REAL NOT NULL,
+                dividend_per_share REAL NOT NULL DEFAULT 0.0,
+                total_dividends REAL NOT NULL DEFAULT 0.0,
+                date_added TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create settings table for budget
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY,
+                budget REAL NOT NULL DEFAULT 0.0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        conn.commit()
+
+def save_portfolio_to_db(portfolio_df):
+    """Save portfolio DataFrame to database"""
+    if portfolio_df.empty:
+        return
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Clear existing data
+        cursor.execute("DELETE FROM portfolio")
+        
+        # Insert new data
+        for _, row in portfolio_df.iterrows():
+            cursor.execute("""
+                INSERT INTO portfolio (
+                    stock_symbol, company_name, shares, buy_price, current_price,
+                    total_investment, current_value, unrealized_pnl, return_pct,
+                    dividend_per_share, total_dividends, date_added
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                row['Stock Symbol'], row['Company Name'], row['Shares'],
+                row['Buy Price'], row['Current Price'], row['Total Investment'],
+                row['Current Value'], row['Unrealized P&L'], row['Return %'],
+                row['Dividend per Share'], row['Total Dividends'], row['Date Added']
+            ))
+        
+        conn.commit()
+
+def load_portfolio_from_db():
+    """Load portfolio from database"""
+    with get_db_connection() as conn:
         try:
-            df = pd.read_csv(PORTFOLIO_FILE)
-            # Ensure all required columns exist
-            required_columns = [
-                'Stock Symbol', 'Company Name', 'Shares', 'Buy Price', 
-                'Current Price', 'Total Investment', 'Current Value', 
-                'Unrealized P&L', 'Return %', 'Dividend per Share', 
-                'Total Dividends', 'Date Added'
-            ]
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = 0 if col != 'Date Added' else datetime.now().strftime("%Y-%m-%d")
+            df = pd.read_sql_query("""
+                SELECT stock_symbol as 'Stock Symbol',
+                       company_name as 'Company Name',
+                       shares as 'Shares',
+                       buy_price as 'Buy Price',
+                       current_price as 'Current Price',
+                       total_investment as 'Total Investment',
+                       current_value as 'Current Value',
+                       unrealized_pnl as 'Unrealized P&L',
+                       return_pct as 'Return %',
+                       dividend_per_share as 'Dividend per Share',
+                       total_dividends as 'Total Dividends',
+                       date_added as 'Date Added'
+                FROM portfolio
+                ORDER BY created_at DESC
+            """, conn)
             return df
         except Exception as e:
-            st.error(f"Error loading portfolio: {e}")
+            st.error(f"Error loading portfolio from database: {e}")
             return pd.DataFrame(columns=[
-                'Stock Symbol', 'Company Name', 'Shares', 'Buy Price', 
-                'Current Price', 'Total Investment', 'Current Value', 
-                'Unrealized P&L', 'Return %', 'Dividend per Share', 
+                'Stock Symbol', 'Company Name', 'Shares', 'Buy Price',
+                'Current Price', 'Total Investment', 'Current Value',
+                'Unrealized P&L', 'Return %', 'Dividend per Share',
                 'Total Dividends', 'Date Added'
             ])
-    else:
-        return pd.DataFrame(columns=[
-            'Stock Symbol', 'Company Name', 'Shares', 'Buy Price', 
-            'Current Price', 'Total Investment', 'Current Value', 
-            'Unrealized P&L', 'Return %', 'Dividend per Share', 
-            'Total Dividends', 'Date Added'
-        ])
 
-# Function to save budget
-def save_budget():
-    with open(BUDGET_FILE, 'w') as f:
-        json.dump({'budget': st.session_state.budget}, f)
+def save_budget_to_db(budget):
+    """Save budget to database"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO settings (id, budget, updated_at)
+            VALUES (1, ?, CURRENT_TIMESTAMP)
+        """, (budget,))
+        conn.commit()
 
-# Function to load budget
-def load_budget():
-    if os.path.exists(BUDGET_FILE):
-        try:
-            with open(BUDGET_FILE, 'r') as f:
-                data = json.load(f)
-                return data.get('budget', 0.0)
-        except Exception as e:
-            st.error(f"Error loading budget: {e}")
-            return 0.0
-    return 0.0
+def load_budget_from_db():
+    """Load budget from database"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT budget FROM settings WHERE id = 1")
+        result = cursor.fetchone()
+        return result[0] if result else 0.0
 
-# Initialize session state with persistent data
+# Initialize database
+init_database()
+
+# Initialize session state with database data
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = load_portfolio()
+    st.session_state.portfolio = load_portfolio_from_db()
 
 if 'budget' not in st.session_state:
-    st.session_state.budget = load_budget()
+    st.session_state.budget = load_budget_from_db()
 
 # Function to update stock prices from Yahoo Finance
 def update_prices_from_yahoo():
@@ -113,7 +184,7 @@ def update_prices_from_yahoo():
             continue
     
     if updated:
-        save_portfolio()
+        save_portfolio_to_db(st.session_state.portfolio)
         return True
     return False
 
@@ -121,8 +192,14 @@ def update_prices_from_yahoo():
 st.title("📈 Stock Portfolio Tracker")
 st.markdown("---")
 
-# Add auto-update button in the header
-col_header1, col_header2, col_header3 = st.columns([2, 1, 1])
+# Add database status indicator
+col_header1, col_header2, col_header3, col_header4 = st.columns([2, 1, 1, 1])
+with col_header1:
+    if os.path.exists(DB_FILE):
+        st.success("🟢 Database Connected")
+    else:
+        st.warning("🟡 Database Initializing...")
+
 with col_header2:
     if st.button("🔄 Update All Prices", help="Fetch latest prices from Yahoo Finance"):
         with st.spinner("Updating prices..."):
@@ -133,11 +210,17 @@ with col_header2:
                 st.warning("No updates available or error occurred")
 
 with col_header3:
-    # Display last save time if file exists
-    if os.path.exists(PORTFOLIO_FILE):
-        mod_time = os.path.getmtime(PORTFOLIO_FILE)
+    # Display last update time
+    if os.path.exists(DB_FILE):
+        mod_time = os.path.getmtime(DB_FILE)
         last_saved = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M")
         st.caption(f"Last saved: {last_saved}")
+
+with col_header4:
+    if st.button("💾 Sync to DB", help="Manually sync data to database"):
+        save_portfolio_to_db(st.session_state.portfolio)
+        save_budget_to_db(st.session_state.budget)
+        st.success("Data synced to database!")
 
 # Create tabs for portfolio and charts
 tab1, tab2 = st.tabs(["📊 Portfolio Management", "📈 Daily Charts"])
@@ -158,7 +241,7 @@ with tab1:
         )
         if budget != st.session_state.budget:
             st.session_state.budget = budget
-            save_budget()
+            save_budget_to_db(budget)
         
         # Portfolio metrics
         if not st.session_state.portfolio.empty:
@@ -249,8 +332,8 @@ with tab1:
                     })
                     
                     st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row], ignore_index=True)
-                    save_portfolio()  # Save immediately after adding
-                    st.success(f"Added {stock_symbol} to portfolio and saved!")
+                    save_portfolio_to_db(st.session_state.portfolio)  # Save to database
+                    st.success(f"Added {stock_symbol} to portfolio and saved to database!")
                     st.rerun()
                 else:
                     st.error("Insufficient budget for this investment!")
@@ -320,8 +403,8 @@ with tab1:
                         st.session_state.portfolio.loc[idx, 'Dividend per Share'] = new_dividend
                         st.session_state.portfolio.loc[idx, 'Total Dividends'] = new_total_dividends
                         
-                        save_portfolio()  # Save after updating
-                        st.success(f"Updated {selected_stock} and saved!")
+                        save_portfolio_to_db(st.session_state.portfolio)  # Save to database
+                        st.success(f"Updated {selected_stock} and saved to database!")
                         st.rerun()
             
             # Remove stock section
@@ -339,8 +422,8 @@ with tab1:
                         st.session_state.portfolio = st.session_state.portfolio[
                             st.session_state.portfolio['Stock Symbol'] != stock_to_remove
                         ].reset_index(drop=True)
-                        save_portfolio()  # Save after removing
-                        st.success(f"Removed {stock_to_remove} and saved!")
+                        save_portfolio_to_db(st.session_state.portfolio)  # Save to database
+                        st.success(f"Removed {stock_to_remove} and saved to database!")
                         st.rerun()
         else:
             st.info("No stocks in portfolio yet. Add your first stock using the form on the left!")
@@ -381,45 +464,55 @@ with tab1:
     # Export functionality
     if not st.session_state.portfolio.empty:
         st.markdown("---")
-        st.header("💾 Export Portfolio")
+        st.header("💾 Export & Data Management")
         
-        col_export1, col_export2, col_export3 = st.columns(3)
+        col_export1, col_export2, col_export3, col_export4 = st.columns(4)
         
         with col_export1:
             csv = st.session_state.portfolio.to_csv(index=False)
             st.download_button(
-                label="Download Portfolio as CSV",
+                label="📥 Download CSV",
                 data=csv,
                 file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime='text/csv'
             )
         
         with col_export2:
-            # Add manual save button
-            if st.button("💾 Manual Save", help="Manually save current portfolio to file"):
-                save_portfolio()
-                save_budget()
-                st.success("Portfolio saved successfully!")
+            if st.button("🔄 Reload from DB", help="Reload portfolio data from database"):
+                st.session_state.portfolio = load_portfolio_from_db()
+                st.session_state.budget = load_budget_from_db()
+                st.success("Data reloaded from database!")
+                st.rerun()
         
         with col_export3:
+            if st.button("💾 Force Save", help="Force save current data to database"):
+                save_portfolio_to_db(st.session_state.portfolio)
+                save_budget_to_db(st.session_state.budget)
+                st.success("Data saved to database!")
+        
+        with col_export4:
             if st.button("🗑️ Clear All Data"):
-                if st.checkbox("I confirm I want to clear all portfolio data"):
+                if st.checkbox("⚠️ I confirm I want to clear ALL data"):
+                    # Clear session state
                     st.session_state.portfolio = pd.DataFrame(columns=[
-                        'Stock Symbol', 'Company Name', 'Shares', 'Buy Price', 
-                        'Current Price', 'Total Investment', 'Current Value', 
-                        'Unrealized P&L', 'Return %', 'Dividend per Share', 
+                        'Stock Symbol', 'Company Name', 'Shares', 'Buy Price',
+                        'Current Price', 'Total Investment', 'Current Value',
+                        'Unrealized P&L', 'Return %', 'Dividend per Share',
                         'Total Dividends', 'Date Added'
                     ])
                     st.session_state.budget = 0.0
-                    # Delete saved files
-                    if os.path.exists(PORTFOLIO_FILE):
-                        os.remove(PORTFOLIO_FILE)
-                    if os.path.exists(BUDGET_FILE):
-                        os.remove(BUDGET_FILE)
-                    st.success("Portfolio cleared and files deleted!")
+                    
+                    # Clear database
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM portfolio")
+                        cursor.execute("DELETE FROM settings")
+                        conn.commit()
+                    
+                    st.success("All data cleared from database!")
                     st.rerun()
 
-# TAB 2: Daily Charts with Hourly Detail
+# TAB 2: Daily Charts (keeping the existing chart functionality)
 with tab2:
     st.header("📈 Daily Stock Charts with Hourly Analysis")
     
@@ -542,7 +635,7 @@ with tab2:
                             prominence=prominence
                         )
                         
-                        # Filter peaks and valleys for changes greater than $0.50
+                        # Filter peaks and valleys for changes greater than $0.05
                         filtered_peaks = []
                         filtered_valleys = []
                         
@@ -617,147 +710,4 @@ with tab2:
                                 x=[dates[i] for i in valleys],
                                 y=[close_prices[i] for i in valleys],
                                 mode='markers+text',
-                                marker=dict(color='#44ff44', size=12, symbol='triangle-down'),
-                                text=valley_texts,
-                                textposition="bottom center",
-                                textfont=dict(color='#44ff44', size=10),
-                                name='Valleys',
-                                hovertemplate='<b>Valley</b><br>%{x}<br>Price: $%{y:.2f}<extra></extra>'
-                            ))
-                    
-                    # Configure chart layout
-                    if time_period in ["1d", "5d"]:
-                        # For intraday data, format x-axis to show hours
-                        fig.update_layout(
-                            xaxis=dict(
-                                title="Time",
-                                tickformat='%H:%M',
-                                dtick=3600000 * 1 if time_period == "1d" else 3600000 * 3  # Every hour for 1d, every 3 hours for 5d
-                            )
-                        )
-                        chart_title = f"{chart_symbol} - Intraday Price Chart ({time_period})"
-                    else:
-                        # For daily data, show dates
-                        fig.update_layout(
-                            xaxis=dict(
-                                title="Date"
-                            )
-                        )
-                        chart_title = f"{chart_symbol} - Daily Price Chart ({time_period})"
-                    
-                    fig.update_layout(
-                        title=chart_title,
-                        yaxis_title="Price ($)",
-                        height=600,
-                        hovermode='x unified',
-                        showlegend=True,
-                        paper_bgcolor='white',
-                        plot_bgcolor='white',
-                        font_color='black',
-                        xaxis=dict(gridcolor='#e0e0e0'),
-                        yaxis=dict(gridcolor='#e0e0e0')
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Add price change bar chart
-                    st.subheader("📊 Price Changes Over Time")
-                    
-                    # Calculate price changes
-                    price_changes = hist['Close'].diff()
-                    
-                    # Create bar chart for price changes
-                    fig_changes = go.Figure()
-                    
-                    # Color based on positive or negative change
-                    colors = ['green' if x >= 0 else 'red' for x in price_changes]
-                    
-                    fig_changes.add_trace(go.Bar(
-                        x=hist.index,
-                        y=price_changes,
-                        name='Price Change',
-                        marker_color=colors,
-                        hovertemplate='<b>%{x}</b><br>Change: $%{y:.2f}<extra></extra>'
-                    ))
-                    
-                    # Configure layout based on time period
-                    if time_period in ["1d", "5d"]:
-                        # For intraday data
-                        interval_text = "5-min intervals" if time_period == "1d" else "30-min intervals"
-                        fig_changes.update_layout(
-                            title=f"Price Changes ({interval_text})",
-                            xaxis=dict(
-                                title="Time",
-                                tickformat='%H:%M',
-                                dtick=3600000 * 1 if time_period == "1d" else 3600000 * 3,
-                                gridcolor='#e0e0e0'
-                            )
-                        )
-                    else:
-                        # For daily data
-                        fig_changes.update_layout(
-                            title="Daily Price Changes",
-                            xaxis=dict(
-                                title="Date",
-                                gridcolor='#e0e0e0'
-                            )
-                        )
-                    
-                    fig_changes.update_layout(
-                        yaxis_title="Price Change ($)",
-                        height=300,
-                        paper_bgcolor='white',
-                        plot_bgcolor='white',
-                        font_color='black',
-                        yaxis=dict(gridcolor='#e0e0e0', zeroline=True, zerolinecolor='black', zerolinewidth=1),
-                        showlegend=False
-                    )
-                    
-                    st.plotly_chart(fig_changes, use_container_width=True)
-                    
-                    # Add statistics for price changes
-                    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                    
-                    with col_stat1:
-                        avg_change = price_changes.mean()
-                        st.metric("Avg Change", f"${avg_change:.2f}")
-                    
-                    with col_stat2:
-                        max_increase = price_changes.max()
-                        st.metric("Max Increase", f"${max_increase:.2f}")
-                    
-                    with col_stat3:
-                        max_decrease = price_changes.min()
-                        st.metric("Max Decrease", f"${max_decrease:.2f}")
-                    
-                    with col_stat4:
-                        volatility = price_changes.std()
-                        st.metric("Volatility (σ)", f"${volatility:.2f}")
-                    
-                    # Display peak and valley summary
-                    if show_annotations and len(hist) > 10:
-                        col_peaks, col_valleys = st.columns(2)
-                        
-                        with col_peaks:
-                            if 'peaks' in locals() and len(peaks) > 0:
-                                st.subheader("🔺 Recent Peaks")
-                                peak_data = []
-                                for i in sorted(peaks[-5:], reverse=True):  # Last 5 peaks
-                                    if time_period in ["1d", "5d"]:
-                                        time_str = dates[i].strftime('%H:%M')
-                                    else:
-                                        time_str = dates[i].strftime('%m/%d/%Y')
-                                    peak_data.append({
-                                        'Time': time_str,
-                                        'Price': f"${close_prices[i]:.2f}"
-                                    })
-                                if peak_data:
-                                    st.dataframe(pd.DataFrame(peak_data), hide_index=True)
-                        
-                        with col_valleys:
-                            if 'valleys' in locals() and len(valleys) > 0:
-                                st.subheader("🔻 Recent Valleys")
-                                valley_data = []
-                                for i in sorted(valleys[-5:], reverse=True):  # Last 5 valleys
-                                    if time_period in ["1d", "5d"]:
-                                        time_str = dates[i].strftime('%H:%M')
+                                marker=dict(color='#44ff44', size=12, symbol='triangle

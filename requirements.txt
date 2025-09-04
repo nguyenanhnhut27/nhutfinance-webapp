@@ -6,5 +6,6 @@ seaborn
 yfinance
 plotly
 requests
+scipy
 
 

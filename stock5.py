@@ -710,4 +710,192 @@ with tab2:
                                 x=[dates[i] for i in valleys],
                                 y=[close_prices[i] for i in valleys],
                                 mode='markers+text',
-                                marker=dict(color='#44ff44', size=12, symbol='triangle
+                                marker=dict(color='#44ff44', size=12, symbol='triangle-down'),
+                                text=valley_texts,
+                                textposition="bottom center",
+                                textfont=dict(color='#44ff44', size=10),
+                                name='Valleys',
+                                hovertemplate='<b>Valley</b><br>%{x}<br>Price: $%{y:.2f}<extra></extra>'
+                            ))
+                    
+                    # Configure chart layout
+                    if time_period in ["1d", "5d"]:
+                        # For intraday data, format x-axis to show hours
+                        fig.update_layout(
+                            xaxis=dict(
+                                title="Time",
+                                tickformat='%H:%M',
+                                dtick=3600000 * 1 if time_period == "1d" else 3600000 * 3  # Every hour for 1d, every 3 hours for 5d
+                            )
+                        )
+                        chart_title = f"{chart_symbol} - Intraday Price Chart ({time_period})"
+                    else:
+                        # For daily data, show dates
+                        fig.update_layout(
+                            xaxis=dict(
+                                title="Date"
+                            )
+                        )
+                        chart_title = f"{chart_symbol} - Daily Price Chart ({time_period})"
+                    
+                    fig.update_layout(
+                        title=chart_title,
+                        yaxis_title="Price ($)",
+                        height=600,
+                        hovermode='x unified',
+                        showlegend=True,
+                        paper_bgcolor='white',
+                        plot_bgcolor='white',
+                        font_color='black',
+                        xaxis=dict(gridcolor='#e0e0e0'),
+                        yaxis=dict(gridcolor='#e0e0e0')
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Add price change bar chart
+                    st.subheader("📊 Price Changes Over Time")
+                    
+                    # Calculate price changes
+                    price_changes = hist['Close'].diff()
+                    
+                    # Create bar chart for price changes
+                    fig_changes = go.Figure()
+                    
+                    # Color based on positive or negative change
+                    colors = ['green' if x >= 0 else 'red' for x in price_changes]
+                    
+                    fig_changes.add_trace(go.Bar(
+                        x=hist.index,
+                        y=price_changes,
+                        name='Price Change',
+                        marker_color=colors,
+                        hovertemplate='<b>%{x}</b><br>Change: $%{y:.2f}<extra></extra>'
+                    ))
+                    
+                    # Configure layout based on time period
+                    if time_period in ["1d", "5d"]:
+                        # For intraday data
+                        interval_text = "5-min intervals" if time_period == "1d" else "30-min intervals"
+                        fig_changes.update_layout(
+                            title=f"Price Changes ({interval_text})",
+                            xaxis=dict(
+                                title="Time",
+                                tickformat='%H:%M',
+                                dtick=3600000 * 1 if time_period == "1d" else 3600000 * 3,
+                                gridcolor='#e0e0e0'
+                            )
+                        )
+                    else:
+                        # For daily data
+                        fig_changes.update_layout(
+                            title="Daily Price Changes",
+                            xaxis=dict(
+                                title="Date",
+                                gridcolor='#e0e0e0'
+                            )
+                        )
+                    
+                    fig_changes.update_layout(
+                        yaxis_title="Price Change ($)",
+                        height=300,
+                        paper_bgcolor='white',
+                        plot_bgcolor='white',
+                        font_color='black',
+                        yaxis=dict(gridcolor='#e0e0e0', zeroline=True, zerolinecolor='black', zerolinewidth=1),
+                        showlegend=False
+                    )
+                    
+                    st.plotly_chart(fig_changes, use_container_width=True)
+                    
+                    # Add statistics for price changes
+                    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                    
+                    with col_stat1:
+                        avg_change = price_changes.mean()
+                        st.metric("Avg Change", f"${avg_change:.2f}")
+                    
+                    with col_stat2:
+                        max_increase = price_changes.max()
+                        st.metric("Max Increase", f"${max_increase:.2f}")
+                    
+                    with col_stat3:
+                        max_decrease = price_changes.min()
+                        st.metric("Max Decrease", f"${max_decrease:.2f}")
+                    
+                    with col_stat4:
+                        volatility = price_changes.std()
+                        st.metric("Volatility (σ)", f"${volatility:.2f}")
+                    
+                    # Display peak and valley summary
+                    if show_annotations and len(hist) > 10:
+                        col_peaks, col_valleys = st.columns(2)
+                        
+                        with col_peaks:
+                            if 'peaks' in locals() and len(peaks) > 0:
+                                st.subheader("🔺 Recent Peaks")
+                                peak_data = []
+                                for i in sorted(peaks[-5:], reverse=True):  # Last 5 peaks
+                                    if time_period in ["1d", "5d"]:
+                                        time_str = dates[i].strftime('%H:%M')
+                                    else:
+                                        time_str = dates[i].strftime('%m/%d/%Y')
+                                    peak_data.append({
+                                        'Time': time_str,
+                                        'Price': f"${close_prices[i]:.2f}"
+                                    })
+                                if peak_data:
+                                    st.dataframe(pd.DataFrame(peak_data), hide_index=True)
+                        
+                        with col_valleys:
+                            if 'valleys' in locals() and len(valleys) > 0:
+                                st.subheader("🔻 Recent Valleys")
+                                valley_data = []
+                                for i in sorted(valleys[-5:], reverse=True):  # Last 5 valleys
+                                    if time_period in ["1d", "5d"]:
+                                        time_str = dates[i].strftime('%H:%M')
+                                    else:
+                                        time_str = dates[i].strftime('%m/%d/%Y')
+                                    valley_data.append({
+                                        'Time': time_str,
+                                        'Price': f"${close_prices[i]:.2f}"
+                                    })
+                                if valley_data:
+                                    st.dataframe(pd.DataFrame(valley_data), hide_index=True)
+                else:
+                    st.error(f"Could not fetch data for {chart_symbol}. Please check the symbol and try again.")
+        except Exception as e:
+            st.error(f"Error fetching data for {chart_symbol}: {str(e)}")
+    else:
+        st.info("Enter a stock symbol above to view charts and analysis.")
+
+# Footer with database info
+st.markdown("---")
+st.markdown("### 🗄️ Database Information")
+col_db1, col_db2, col_db3 = st.columns(3)
+
+with col_db1:
+    if os.path.exists(DB_FILE):
+        db_size = os.path.getsize(DB_FILE)
+        st.write(f"**Database Size:** {db_size:,} bytes")
+
+with col_db2:
+    # Count records in database
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM portfolio")
+            portfolio_count = cursor.fetchone()[0]
+            st.write(f"**Stocks in DB:** {portfolio_count}")
+    except:
+        st.write("**Stocks in DB:** 0")
+
+with col_db3:
+    st.write("**Database Type:** SQLite (Local)")
+
+st.markdown("""
+<div style='text-align: center; color: #666; font-size: 0.8em; margin-top: 2rem;'>
+    📈 Stock Portfolio Tracker with Persistent Database Storage<br>
+    Your data is automatically saved and will persist across sessions!
+</div>
+""", unsafe_allow_html=True)

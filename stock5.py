@@ -802,8 +802,7 @@ with tab2:
                                                              NA: National Bank of Canada
                                                              CM: CIBC Bank
                                                              BMO: Bank of Montreal
-                                                             TD: Toronto-Dominion Bank (TD Bank)
-    ")
+                                                             TD: Toronto-Dominion Bank (TD Bank) ")
     
     # Chart controls
     col_ca1, col_ca2, col_ca3 = st.columns([2, 1, 1])
@@ -1002,4 +1001,5 @@ st.markdown("""
     Your data is automatically saved and will persist across sessions!
 </div>
 """, unsafe_allow_html=True)
+
 

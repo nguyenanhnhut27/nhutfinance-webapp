@@ -797,12 +797,15 @@ def create_stock_chart(chart_symbol, time_period, show_annotations, market_type)
 with tab2:
     st.header("🇨🇦 Canadian Stock Charts")
     st.image("https://flagcdn.com/w40/ca.png", width=32)
-    st.info("For Canadian stocks, enter the base symbol with RY: Royal Bank of Canada 
-                                                             BNS: Bank of Nova Scotia
-                                                             NA: National Bank of Canada
-                                                             CM: CIBC Bank
-                                                             BMO: Bank of Montreal
-                                                             TD: Toronto-Dominion Bank (TD Bank) ")
+    st.info("""For Canadian stocks, enter the base symbol (e.g., TD, RY, CNR). The .TO suffix will be added automatically.
+    
+    Popular Canadian Bank Symbols:
+    • TD: Toronto-Dominion Bank
+    • RY: Royal Bank of Canada
+    • BMO: Bank of Montreal
+    • BNS: Bank of Nova Scotia (Scotiabank)
+    • CM: Canadian Imperial Bank of Commerce (CIBC)
+    • NA: National Bank of Canada""")
     
     # Chart controls
     col_ca1, col_ca2, col_ca3 = st.columns([2, 1, 1])
@@ -854,10 +857,10 @@ with tab2:
 with tab3:
     st.header("🇺🇸 US Stock Charts")
     st.image("https://flagcdn.com/w40/us.png", width=32)
-    st.info("For The US  stocks, enter the base symbol with APPL: Apple Company
+    st.info("""For The US  stocks, enter the base symbol with APPL: Apple Company
                                                             BAC: Bank of America Corp
                                                             BFC: Bank First Corp
-                                                            VOO : S&P 500 ETF)
+                                                            VOO : S&P 500 ETF""")
 
     
     # Chart controls
@@ -1001,5 +1004,6 @@ st.markdown("""
     Your data is automatically saved and will persist across sessions!
 </div>
 """, unsafe_allow_html=True)
+
 
 
